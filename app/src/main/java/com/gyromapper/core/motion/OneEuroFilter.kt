@@ -1,66 +1,67 @@
-package com.gyromapper.core.aggregator
-
-import com.gyromapper.core.data.GyroSource
-import com.gyromapper.core.data.UnifiedInputState
-import java.util.concurrent.atomic.AtomicReference
+package com.gyromapper.core.motion
 
 /**
- * Thread-safe aggregator that holds the current UnifiedInputState.
- * Uses AtomicReference for lock-free updates.
+ * One Euro Filter implementation ported from the official C++/Java version.
+ * 
+ * Reference: G. Casiez, N. Roussel, and D. Vogel. "1€ Filter: A Simple Speed-based
+ * Low-pass Filter for Noisy Input in Interactive Systems."
  */
-class InputAggregator {
-    private val stateRef = AtomicReference(UnifiedInputState())
+class OneEuroFilter(
+    private val minCutoff: Double = 1.0,
+    private val beta: Double = 0.007,
+    private val dCutoff: Double = 1.0
+) {
+    private var xPrev: Double? = null
+    private var dxPrev: Double? = null
+    private var tPrev: Double? = null
 
-    /**
-     * Get a snapshot of the current state.
-     */
-    fun getState(): UnifiedInputState = stateRef.get()
-
-    /**
-     * Update the state atomically.
-     */
-    fun update(updater: (UnifiedInputState) -> UnifiedInputState) {
-        var old: UnifiedInputState
-        var new: UnifiedInputState
-        do {
-            old = stateRef.get()
-            new = updater(old)
-        } while (!stateRef.compareAndSet(old, new))
-    }
-
-    // Convenience methods
-
-    fun updateGyro(dx: Float, dy: Float, timestamp: Long, source: GyroSource = GyroSource.ODIN_IMU) {
-        update { state ->
-            state.copy(
-                gyroDelta = dx to dy,
-                gyroSource = source,
-                timestamp = timestamp
-            )
+    fun filter(x: Double, t: Double): Double {
+        if (xPrev == null || tPrev == null) {
+            xPrev = x
+            tPrev = t
+            dxPrev = 0.0
+            return x
         }
+
+        val dt = (t - tPrev!!).coerceAtLeast(0.0001)
+        val dx = (x - xPrev!!) / dt
+        val edx = lowPass(dx, dxPrev!!, dt, dCutoff)
+        dxPrev = edx
+
+        val cutoff = minCutoff + beta * kotlin.math.abs(edx)
+        val result = lowPass(x, xPrev!!, dt, cutoff)
+        xPrev = x
+        tPrev = t
+        return result
     }
 
-    fun updateButton(keyCode: Int, pressed: Boolean) {
-        update { state ->
-            val newButtons = state.gamepadButtons.toMutableMap()
-            if (pressed) {
-                newButtons[keyCode] = true
-            } else {
-                newButtons.remove(keyCode)
-            }
-            state.copy(gamepadButtons = newButtons)
-        }
+    private fun lowPass(x: Double, xPrev: Double, dt: Double, cutoff: Double): Double {
+        val tau = 1.0 / (2.0 * Math.PI * cutoff)
+        val alpha = dt / (tau + dt)
+        return xPrev + alpha * (x - xPrev)
     }
 
-    fun updateLeftStick(x: Float, y: Float) {
-        update { it.copy(leftStick = x to y) }
+    fun reset() {
+        xPrev = null
+        dxPrev = null
+        tPrev = null
+    }
+}
+
+class OneEuroFilter2D(
+    minCutoff: Double = 1.0,
+    beta: Double = 0.007,
+    dCutoff: Double = 1.0
+) {
+    private val filterX = OneEuroFilter(minCutoff, beta, dCutoff)
+    private val filterY = OneEuroFilter(minCutoff, beta, dCutoff)
+
+    fun filter(x: Double, y: Double, t: Double): Pair<Double, Double> {
+        return filterX.filter(x, t) to filterY.filter(y, t)
     }
 
-    fun updateRightStick(x: Float, y: Float) {
-        update { it.copy(rightStick = x to y) }
-    }
-
-    fun clearAll() {
-        update { UnifiedInputState() }
+    fun reset() {
+        filterX.reset()
+        filterY.reset()
     }
 }
