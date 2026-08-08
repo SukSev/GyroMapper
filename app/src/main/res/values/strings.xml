@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Gyro Mapper</string>
+    <string name="accessibility_service_description">Gyro Mapper accessibility service for capturing gamepad input and detecting foreground apps.</string>
+</resources>
