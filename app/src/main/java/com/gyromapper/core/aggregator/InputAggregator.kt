@@ -12,6 +12,14 @@ class InputAggregator {
     private val stateRef = AtomicReference(UnifiedInputState())
 
     /**
+     * Fired after every updateGyro() call. Lets gyro sources (Odin IMU,
+     * future 8BitDo HID) drive processing without needing a reference
+     * back to whatever orchestrates it - they only ever talk to the
+     * aggregator.
+     */
+    var onGyroUpdate: (() -> Unit)? = null
+
+    /**
      * Get a snapshot of the current state.
      */
     fun getState(): UnifiedInputState = stateRef.get()
@@ -30,7 +38,7 @@ class InputAggregator {
 
     // Convenience methods
 
-    fun updateGyro(dx: Float, dy: Float, timestamp: Long, source: GyroSource = GyroSource.ODIN_IMU) {
+    fun updateGyro(dx: Float, dy: Float, timestamp: Long, source: GyroSource) {
         update { state ->
             state.copy(
                 gyroDelta = dx to dy,
@@ -38,6 +46,7 @@ class InputAggregator {
                 timestamp = timestamp
             )
         }
+        onGyroUpdate?.invoke()
     }
 
     fun updateButton(keyCode: Int, pressed: Boolean) {
