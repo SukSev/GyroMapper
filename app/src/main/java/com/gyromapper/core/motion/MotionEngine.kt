@@ -27,8 +27,22 @@ class MotionEngine(
     private var lastFilteredY: Float = 0f
     private var lastTimestampSec: Double = 0.0
 
+    // Tracks the previous sample's timestamp so raw gyro rate (rad/s) can
+    // be converted into an actual angular delta for this sample. Without
+    // this, apparent motion speed scales with how often samples arrive,
+    // not just with physical rotation speed - which matters a lot once a
+    // second source with a different sample rate exists.
+    private var lastSampleTimeNanos: Long = 0L
+
     @Synchronized
     fun process(rawDx: Float, rawDy: Float, timestampNanos: Long): MotionDelta {
+        val dt = if (lastSampleTimeNanos == 0L) {
+            0f
+        } else {
+            (timestampNanos - lastSampleTimeNanos) / 1_000_000_000f
+        }
+        lastSampleTimeNanos = timestampNanos
+
         val timestampSec = timestampNanos / 1_000_000_000.0
         val calibrated = calibrate(rawDx, rawDy, timestampNanos)
 
@@ -42,8 +56,8 @@ class MotionEngine(
             0f to 0f
         }
 
-        val scaledDx = filtered.first * sensitivity
-        val scaledDy = filtered.second * sensitivity
+        val scaledDx = filtered.first * dt * sensitivity
+        val scaledDy = filtered.second * dt * sensitivity
         return MotionDelta(scaledDx, scaledDy, timestampNanos)
     }
 
@@ -107,5 +121,6 @@ class MotionEngine(
         filter.reset()
         lastFilteredX = 0f
         lastFilteredY = 0f
+        lastSampleTimeNanos = 0L
     }
 }
