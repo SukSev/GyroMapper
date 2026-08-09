@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import com.gyromapper.R
 import com.gyromapper.core.aggregator.InputAggregator
 import com.gyromapper.core.backends.LogBackend
+import com.gyromapper.core.backends.OutputBackend
 import com.gyromapper.core.camera.CameraAction
 import com.gyromapper.core.controller.OdinIMUReader
 import com.gyromapper.core.data.CameraDelta
@@ -44,12 +45,13 @@ class GyroMapperService : Service() {
     private lateinit var motionEngine: MotionEngine
     private lateinit var mappingEngine: MappingEngine
     private lateinit var cameraAction: CameraAction
-    private lateinit var logBackend: LogBackend
+    private lateinit var outputBackend: OutputBackend
     private lateinit var imuReader: OdinIMUReader
 
     // Processing handler (to avoid blocking sensor thread)
     private val handler = Handler(Looper.getMainLooper())
     private var isProcessing = false
+    private var wasGyroActive = false
 
     override fun onCreate() {
         super.onCreate()
@@ -61,11 +63,24 @@ class GyroMapperService : Service() {
         motionEngine = MotionEngine(sensitivity = 0.5f)
         mappingEngine = MappingEngine()
         cameraAction = CameraAction()
-        logBackend = LogBackend()
+        // Swap for TouchInjectionBackend once the Odin path is verified via
+        // logcat - outputBackend is typed against the interface so that's
+        // a one-line change, e.g.:
+        // outputBackend = TouchInjectionBackend(
+        //     GyroMapperAccessibilityService.instance!!,
+        //     RectF(100f, 100f, 900f, 700f)
+        // )
+        outputBackend = LogBackend()
         imuReader = OdinIMUReader(this, aggregator)
 
-        // Start log backend
-        logBackend.onStart()
+        // Gyro samples drive the processing loop; wiring this on the
+        // aggregator (rather than in each reader) means any future gyro
+        // source gets the same triggering for free just by calling
+        // aggregator.updateGyro().
+        aggregator.onGyroUpdate = { triggerProcess() }
+
+        // Start output backend
+        outputBackend.onStart()
 
         // Start IMU reader
         imuReader.start()
@@ -90,7 +105,7 @@ class GyroMapperService : Service() {
 
         // Clean up
         imuReader.stop()
-        logBackend.onStop()
+        outputBackend.onStop()
 
         instance = null
         super.onDestroy()
@@ -133,7 +148,9 @@ class GyroMapperService : Service() {
     }
 
     /**
-     * Main processing loop - triggered by gyro updates.
+     * Main processing loop - triggered by gyro updates (and by button
+     * changes, so activation state is picked up immediately rather than
+     * waiting for the next gyro sample).
      * Runs on the main thread to avoid sensor thread blocking.
      */
     private fun processInput() {
@@ -143,18 +160,20 @@ class GyroMapperService : Service() {
         handler.post {
             try {
                 val state = aggregator.getState()
+                val active = state.hasGyroSource() && mappingEngine.isGyroActive(state)
 
-                // Only process if gyro is active
-                if (!state.isGyroActive()) {
+                if (!active) {
+                    if (wasGyroActive) {
+                        // Gyro just deactivated - force-lift whatever the
+                        // backend has in progress rather than leaving it
+                        // stuck mid-drag.
+                        outputBackend.release()
+                        wasGyroActive = false
+                    }
                     isProcessing = false
                     return@post
                 }
-
-                // Check if gyro mapping is active
-                if (!mappingEngine.isGyroActive(state)) {
-                    isProcessing = false
-                    return@post
-                }
+                wasGyroActive = true
 
                 // Step 1: Motion pipeline
                 val rawDx = state.gyroDelta.first
@@ -165,7 +184,7 @@ class GyroMapperService : Service() {
                 val camera: CameraDelta = cameraAction.process(motion, state)
 
                 // Step 3: Send to backend
-                logBackend.send(camera)
+                outputBackend.send(camera)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing input", e)
@@ -176,8 +195,8 @@ class GyroMapperService : Service() {
     }
 
     /**
-     * Public method to trigger processing from IMU reader.
-     * Called indirectly via aggregator updates.
+     * Public method to trigger processing. Called from the aggregator's
+     * onGyroUpdate callback, and directly from the button handlers above.
      */
     fun triggerProcess() {
         processInput()
