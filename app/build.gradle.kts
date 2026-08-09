@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.gyromapper"
+    namespace = "com.gyromapper"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.gyromapper"
+        applicationId = "com.gyromapper"
         minSdk = 31
         targetSdk = 37
         versionCode = 1
