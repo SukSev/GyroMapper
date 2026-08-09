@@ -5,9 +5,6 @@ import android.view.KeyEvent
 
 /**
  * MappingEngine: controls when gyro is active based on activation mode.
- *
- * Phase 0: always active (no button hold required).
- * Future: toggle mode, hold mode with configurable buttons.
  */
 class MappingEngine {
     enum class ActivationMode {
@@ -22,6 +19,7 @@ class MappingEngine {
 
     // Toggle state
     private var toggledOn: Boolean = false
+    private var lastPressed: Boolean = false
 
     /**
      * Determine if gyro should be active based on current input state.
@@ -30,32 +28,23 @@ class MappingEngine {
     fun isGyroActive(state: UnifiedInputState): Boolean {
         return when (activationMode) {
             ActivationMode.ALWAYS_ON -> true
-
-            ActivationMode.HOLD_BUTTON -> {
-                state.gamepadButtons[activationKeyCode] == true
-            }
-
-            ActivationMode.TOGGLE_BUTTON -> {
-                val isPressed = state.gamepadButtons[activationKeyCode] == true
-                // This is a simplified toggle - in production we'd need edge detection
-                // For Phase 0, just return the current toggle state
-                toggledOn
-            }
+            ActivationMode.HOLD_BUTTON -> state.gamepadButtons[activationKeyCode] == true
+            ActivationMode.TOGGLE_BUTTON -> toggledOn
         }
     }
 
     /**
      * Called when button state changes - used for toggle mode edge detection.
-     * In Phase 0, this is a placeholder.
+     * Only flips on the false -> true transition, so this is safe to call
+     * on every button event (including repeats) without spamming the toggle.
      */
     fun onButtonStateChanged(keyCode: Int, pressed: Boolean) {
-        if (activationMode == ActivationMode.TOGGLE_BUTTON && keyCode == activationKeyCode) {
-            if (pressed) {
-                // Edge detection would go here
-                // For Phase 0, simple toggle on each press
-                toggledOn = !toggledOn
-            }
+        if (keyCode != activationKeyCode) return
+
+        if (activationMode == ActivationMode.TOGGLE_BUTTON && pressed && !lastPressed) {
+            toggledOn = !toggledOn
         }
+        lastPressed = pressed
     }
 
     fun setActivationMode(mode: ActivationMode) {
@@ -63,5 +52,6 @@ class MappingEngine {
         if (mode != ActivationMode.TOGGLE_BUTTON) {
             toggledOn = false
         }
+        lastPressed = false
     }
 }
