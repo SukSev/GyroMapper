@@ -24,7 +24,7 @@ data class UnifiedInputState(
     // Timestamp in nanoseconds
     val timestamp: Long = 0L
 ) {
-    fun isGyroActive(): Boolean = gyroSource != GyroSource.NONE
+    fun hasGyroSource(): Boolean = gyroSource != GyroSource.NONE
 }
 
 /**
