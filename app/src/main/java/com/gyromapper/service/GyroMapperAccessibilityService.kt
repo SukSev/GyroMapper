@@ -12,7 +12,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import com.gyromapper.core.aggregator.InputAggregator
 
 private const val TAG = "GyroMapperAccessibility"
 
@@ -23,7 +22,6 @@ class GyroMapperAccessibilityService : AccessibilityService() {
             private set
     }
 
-    private lateinit var aggregator: InputAggregator
     private var windowManager: WindowManager? = null
 
     // Track current foreground package
@@ -167,6 +165,8 @@ class GyroMapperAccessibilityService : AccessibilityService() {
 
     /**
      * Perform a touch gesture injection (future use for fallback backend).
+     * Superseded by TouchInjectionBackend - safe to delete once you've
+     * wired that in.
      */
     @Suppress("unused")
     fun injectTouch(x: Float, y: Float, durationMs: Long = 16) {
