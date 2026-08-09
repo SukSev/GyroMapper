@@ -22,7 +22,12 @@ class LogBackend : OutputBackend {
     }
 
     override fun onStop() {
+        release()
         Log.d(TAG, "LogBackend stopped")
+    }
+
+    override fun release() {
+        Log.d(TAG, "LogBackend release() - no-op, nothing to lift")
     }
 
     override fun isConnected(): Boolean = true
