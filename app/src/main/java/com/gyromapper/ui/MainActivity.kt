@@ -6,12 +6,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.gyromapper.R
+import com.gyromapper.core.controller.UsbHidProbe
 import com.gyromapper.service.GyroMapperAccessibilityService
 import com.gyromapper.service.GyroMapperService
 
@@ -30,7 +32,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize views
         statusText = findViewById(R.id.statusText)
         foregroundText = findViewById(R.id.foregroundText)
         gyroStatusText = findViewById(R.id.gyroStatusText)
@@ -38,7 +39,6 @@ class MainActivity : AppCompatActivity() {
         startStopButton = findViewById(R.id.startStopButton)
         accessibilityButton = findViewById(R.id.accessibilityButton)
 
-        // Check accessibility service permission
         updateAccessibilityButton()
 
         accessibilityButton.setOnClickListener {
@@ -53,11 +53,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Request necessary permissions
         requestPermissions()
-
-        // Update UI periodically
         updateUi()
+
+        // Temporary: 8BitDo diagnostic probe. Have the controller
+        // connected before launching. Remove once BitDoHidReader is real.
+        UsbHidProbe(this).let { probe ->
+            probe.findEightBitDo()?.let { probe.requestPermissionAndProbe(it) }
+                ?: Log.w("MainActivity", "No 8BitDo device found - check it's connected")
+        }
     }
 
     override fun onResume() {
@@ -74,12 +78,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Usage stats permission (for foreground detection)
         try {
             val usageStatsManager = getSystemService(USAGE_STATS_SERVICE)
-            // Check if we have permission
             val apps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                // Just check if we can query
                 true
             } else {
                 true
@@ -125,20 +126,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Service already started via accessibility service
         isServiceRunning = true
         updateUi()
         Toast.makeText(this, "Gyro Mapper started", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopGyroMapper() {
-        // Stop the service
         val intent = Intent(this, GyroMapperService::class.java)
         stopService(intent)
-
-        // Also stop accessibility service if we can
         GyroMapperAccessibilityService.instance?.disableSelf()
-
         isServiceRunning = false
         updateUi()
         Toast.makeText(this, "Gyro Mapper stopped", Toast.LENGTH_SHORT).show()
@@ -151,15 +147,12 @@ class MainActivity : AppCompatActivity() {
         statusText.text = if (isRunning) "🟢 Service Running" else "🔴 Service Stopped"
         startStopButton.text = if (isRunning) "Stop Service" else "Start Service"
 
-        // Update foreground app
         val foreground = GyroMapperService.currentForegroundPackage
         foregroundText.text = "Foreground: ${foreground ?: "None"}"
 
-        // Update gyro status (placeholder)
         val imuAvailable = service?.imuReader?.isAvailable() ?: false
         gyroStatusText.text = "IMU: ${if (imuAvailable) "✅ Available" else "❌ Not Available"}"
 
-        // Update calibration status
         val calState = service?.motionEngine?.getCalibrationState()
         calibrationText.text = when (calState) {
             com.gyromapper.core.motion.MotionEngine.CalibrationState.IDLE -> "Calibration: Idle"
@@ -169,11 +162,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateAccessibilityButton()
-
-        // Update notification if service is running
         service?.updateNotification()
 
-        // Schedule next update
         if (!isFinishing) {
             statusText.postDelayed({ updateUi() }, 1000)
         }
