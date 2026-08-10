@@ -4,9 +4,7 @@ plugins {
 
 android {
     namespace = "com.gyromapper"
-    compileSdk {
-        version = release(37)
-    }
+    compileSdk = 37   // ← must be ≥37 for the current dependencies
 
     defaultConfig {
         applicationId = "com.gyromapper"
@@ -20,9 +18,11 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {

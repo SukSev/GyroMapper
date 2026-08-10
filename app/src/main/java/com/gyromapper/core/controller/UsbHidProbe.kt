@@ -17,7 +17,7 @@ import android.util.Log
 private const val TAG = "UsbHidProbe"
 private const val ACTION_USB_PERMISSION = "com.gyromapper.USB_PERMISSION"
 private const val EIGHTBITDO_VENDOR_ID = 0x2DC8
-private const val NINTENDO_VENDOR_ID = 0x057E // Switch mode impersonates this
+private const val NINTENDO_VENDOR_ID = 0x057E
 
 /** Throwaway diagnostic tool. list -> requestPermissionAndProbe -> watch logcat. */
 class UsbHidProbe(private val context: Context) {
@@ -38,8 +38,6 @@ class UsbHidProbe(private val context: Context) {
         return devices
     }
 
-    /** Matches 8BitDo's own vendor ID (XInput/DInput) or Nintendo's
-     *  (Switch mode impersonates it). */
     fun findEightBitDo(): UsbDevice? =
         listDevices().firstOrNull { it.vendorId == EIGHTBITDO_VENDOR_ID || it.vendorId == NINTENDO_VENDOR_ID }
 
@@ -50,8 +48,9 @@ class UsbHidProbe(private val context: Context) {
             return
         }
 
+        // --- FIX: use FLAG_IMMUTABLE (Android 14+ requires this for implicit intents) ---
         val permissionIntent = PendingIntent.getBroadcast(
-            context, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_MUTABLE
+            context, 0, Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val receiver = object : BroadcastReceiver() {
@@ -126,9 +125,6 @@ class UsbHidProbe(private val context: Context) {
         startReadLoop(conn)
     }
 
-    /** Well-formed, parseable for standard HID gamepads - decode by hand
-     *  against the USB HID usage tables, or paste into a free online
-     *  HID descriptor decoder. */
     private fun dumpReportDescriptor(conn: UsbDeviceConnection, interfaceNumber: Int) {
         val buffer = ByteArray(512)
         val len = conn.controlTransfer(0x81, 0x06, (0x22 shl 8), interfaceNumber, buffer, buffer.size, 500)
@@ -140,9 +136,6 @@ class UsbHidProbe(private val context: Context) {
         }
     }
 
-    /** Nintendo-protocol subcommands to enable full reports + IMU.
-     *  Harmless in any mode - an unrecognized output report should just
-     *  be ignored by a non-Nintendo-protocol device. */
     private fun tryEnableFullReportAndImu(conn: UsbDeviceConnection) {
         val rumbleNeutral = byteArrayOf(0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40)
 

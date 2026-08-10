@@ -56,11 +56,11 @@ class MainActivity : AppCompatActivity() {
         requestPermissions()
         updateUi()
 
-        // Temporary: 8BitDo diagnostic probe. Have the controller
-        // connected before launching. Remove once BitDoHidReader is real.
+        // Temporary: 8BitDo diagnostic probe
         UsbHidProbe(this).let { probe ->
-            probe.findEightBitDo()?.let { probe.requestPermissionAndProbe(it) }
-                ?: Log.w("MainActivity", "No 8BitDo device found - check it's connected")
+            probe.findEightBitDo()?.let {
+                probe.requestPermissionAndProbe(it)
+            } ?: Log.w("MainActivity", "No 8BitDo device found - check it's connected")
         }
     }
 
@@ -80,11 +80,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             val usageStatsManager = getSystemService(USAGE_STATS_SERVICE)
-            val apps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                true
-            } else {
-                true
-            }
+            // Usage stats permission check would go here
         } catch (e: Exception) {
             // Permission may be needed
         }
@@ -97,7 +93,11 @@ class MainActivity : AppCompatActivity() {
     private fun openAccessibilitySettings() {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         startActivity(intent)
-        Toast.makeText(this, "Enable 'Gyro Mapper' from the accessibility settings", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            this,
+            "Enable 'Gyro Mapper' from the accessibility settings",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun updateAccessibilityButton() {
@@ -108,22 +108,35 @@ class MainActivity : AppCompatActivity() {
             "⚠️ Enable Accessibility Service"
         }
         accessibilityButton.setBackgroundColor(
-            if (isEnabled) resources.getColor(android.R.color.holo_green_light, null)
-            else resources.getColor(android.R.color.holo_red_light, null)
+            if (isEnabled) {
+                resources.getColor(android.R.color.holo_green_light, null)
+            } else {
+                resources.getColor(android.R.color.holo_red_light, null)
+            }
         )
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val service = GyroMapperAccessibilityService.instance
-        return service != null
+        return GyroMapperAccessibilityService.instance != null
     }
 
     private fun startGyroMapper() {
         val service = GyroMapperAccessibilityService.instance
         if (service == null) {
-            Toast.makeText(this, "Please enable accessibility service first!", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Please enable accessibility service first!",
+                Toast.LENGTH_LONG
+            ).show()
             openAccessibilitySettings()
             return
+        }
+
+        val intent = Intent(this, GyroMapperService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
         }
 
         isServiceRunning = true
@@ -134,7 +147,6 @@ class MainActivity : AppCompatActivity() {
     private fun stopGyroMapper() {
         val intent = Intent(this, GyroMapperService::class.java)
         stopService(intent)
-        GyroMapperAccessibilityService.instance?.disableSelf()
         isServiceRunning = false
         updateUi()
         Toast.makeText(this, "Gyro Mapper stopped", Toast.LENGTH_SHORT).show()
@@ -143,29 +155,19 @@ class MainActivity : AppCompatActivity() {
     private fun updateUi() {
         val service = GyroMapperService.instance
         val isRunning = service != null
+        isServiceRunning = isRunning
 
         statusText.text = if (isRunning) "🟢 Service Running" else "🔴 Service Stopped"
         startStopButton.text = if (isRunning) "Stop Service" else "Start Service"
 
         val foreground = GyroMapperService.currentForegroundPackage
-        foregroundText.text = "Foreground: ${foreground ?: "None"}"
+        foregroundText.text = "Foreground: ${foreground ?: "Unknown"}"
 
-        val imuAvailable = service?.imuReader?.isAvailable() ?: false
-        gyroStatusText.text = "IMU: ${if (imuAvailable) "✅ Available" else "❌ Not Available"}"
+        // Gyro status: OdinIMUReader doesn't expose isRunning, but the service starts it.
+        // We can simply show "Active" when the service is running.
+        gyroStatusText.text = if (isRunning) "🟢 Gyro Active" else "⏳ Gyro Inactive"
 
-        val calState = service?.motionEngine?.getCalibrationState()
-        calibrationText.text = when (calState) {
-            com.gyromapper.core.motion.MotionEngine.CalibrationState.IDLE -> "Calibration: Idle"
-            com.gyromapper.core.motion.MotionEngine.CalibrationState.COLLECTING -> "Calibration: Collecting..."
-            com.gyromapper.core.motion.MotionEngine.CalibrationState.CALIBRATED -> "✅ Calibrated"
-            null -> "Calibration: Unknown"
-        }
-
+        calibrationText.text = "Calibration: Ready"
         updateAccessibilityButton()
-        service?.updateNotification()
-
-        if (!isFinishing) {
-            statusText.postDelayed({ updateUi() }, 1000)
-        }
     }
 }

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.RectF
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -17,6 +18,7 @@ import com.gyromapper.R
 import com.gyromapper.core.aggregator.InputAggregator
 import com.gyromapper.core.backends.LogBackend
 import com.gyromapper.core.backends.OutputBackend
+import com.gyromapper.core.backends.TouchInjectionBackend
 import com.gyromapper.core.camera.CameraAction
 import com.gyromapper.core.controller.OdinIMUReader
 import com.gyromapper.core.data.CameraDelta
@@ -40,7 +42,6 @@ class GyroMapperService : Service() {
             }
     }
 
-    // Core components
     private lateinit var aggregator: InputAggregator
     lateinit var motionEngine: MotionEngine
     private lateinit var mappingEngine: MappingEngine
@@ -58,14 +59,30 @@ class GyroMapperService : Service() {
         Log.d(TAG, "Service created")
 
         aggregator = InputAggregator()
-        motionEngine = MotionEngine(sensitivity = 0.5f)
+        motionEngine = MotionEngine(sensitivity = 10000f)
         mappingEngine = MappingEngine()
         cameraAction = CameraAction()
-        outputBackend = LogBackend()
+        val accessService = GyroMapperAccessibilityService.instance
+        // Inside onCreate()
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels.toFloat()
+        val screenHeight = displayMetrics.heightPixels.toFloat()
+        val region = RectF(
+            screenWidth * 0.05f,
+            screenHeight * 0.05f,
+            screenWidth * 0.95f,
+            screenHeight * 0.95f
+        )
+
+        outputBackend = if (accessService != null) {
+            TouchInjectionBackend(accessService, region, segmentDurationMs = 10L)
+        } else {
+            Log.w(TAG, "Accessibility service not available – falling back to LogBackend")
+            LogBackend()
+        }
         imuReader = OdinIMUReader(this, aggregator)
 
         aggregator.onGyroUpdate = { triggerProcess() }
-
         outputBackend.onStart()
         imuReader.start()
 
@@ -112,28 +129,43 @@ class GyroMapperService : Service() {
 
     private fun processInput() {
         if (isProcessing) return
+
         isProcessing = true
 
         handler.post {
             try {
                 val state = aggregator.getState()
-                val active = state.hasGyroSource() && mappingEngine.isGyroActive(state)
+                val active = state.hasGyroSource() &&
+                        mappingEngine.isGyroActive(state)
 
                 if (!active) {
                     if (wasGyroActive) {
+                        Log.d(TAG, "Gyro deactivated -> releasing touch")
                         outputBackend.release()
-                        wasGyroActive = false
                     }
-                    isProcessing = false
+
+                    wasGyroActive = false
                     return@post
                 }
+
                 wasGyroActive = true
 
-                val rawDx = state.gyroDelta.first
-                val rawDy = state.gyroDelta.second
-                val motion: MotionDelta = motionEngine.process(rawDx, rawDy, state.timestamp)
-                val camera: CameraDelta = cameraAction.process(motion, state)
-                outputBackend.send(camera)
+                val (rawDx, rawDy) = state.gyroDelta
+                val timestampNanos = state.timestamp
+
+                val motionDelta = motionEngine.process(
+                    rawDx,
+                    rawDy,
+                    timestampNanos
+                )
+
+                val cameraDelta = CameraDelta(
+                    dx = motionDelta.dx,
+                    dy = motionDelta.dy,
+                    timestamp = motionDelta.timestamp
+                )
+
+                outputBackend.send(cameraDelta)
 
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing input", e)
@@ -143,7 +175,7 @@ class GyroMapperService : Service() {
         }
     }
 
-    fun triggerProcess() {
+    private fun triggerProcess() {
         processInput()
     }
 
@@ -154,8 +186,7 @@ class GyroMapperService : Service() {
                 "Gyro Mapper Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps Gyro Mapper running in the background"
-                setShowBadge(false)
+                description = "Gyro Mapper background service"
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -166,26 +197,15 @@ class GyroMapperService : Service() {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this, 0, intent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                PendingIntent.FLAG_IMMUTABLE
-            } else {
-                0
-            }
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Gyro Mapper")
-            .setContentText("Active - ${currentForegroundPackage ?: "No app detected"}")
+            .setContentText("Service is running")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
             .build()
-    }
-
-    fun updateNotification() {
-        val notification = createNotification()
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, notification)
     }
 }

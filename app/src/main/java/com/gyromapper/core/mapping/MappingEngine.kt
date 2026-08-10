@@ -3,9 +3,6 @@ package com.gyromapper.core.mapping
 import com.gyromapper.core.data.UnifiedInputState
 import android.view.KeyEvent
 
-/**
- * MappingEngine: controls when gyro is active based on activation mode.
- */
 class MappingEngine {
     enum class ActivationMode {
         ALWAYS_ON,
@@ -13,18 +10,21 @@ class MappingEngine {
         TOGGLE_BUTTON
     }
 
-    // Configuration
+    // Configuration with custom setter to reset toggle state when mode changes
     var activationMode: ActivationMode = ActivationMode.ALWAYS_ON
-    var activationKeyCode: Int = KeyEvent.KEYCODE_BUTTON_L1 // Default: left bumper
+        set(value) {
+            field = value
+            if (value != ActivationMode.TOGGLE_BUTTON) {
+                toggledOn = false
+            }
+            lastPressed = false
+        }
 
-    // Toggle state
+    var activationKeyCode: Int = KeyEvent.KEYCODE_BUTTON_L1
+
     private var toggledOn: Boolean = false
     private var lastPressed: Boolean = false
 
-    /**
-     * Determine if gyro should be active based on current input state.
-     * @return true if gyro mapping is active
-     */
     fun isGyroActive(state: UnifiedInputState): Boolean {
         return when (activationMode) {
             ActivationMode.ALWAYS_ON -> true
@@ -33,11 +33,6 @@ class MappingEngine {
         }
     }
 
-    /**
-     * Called when button state changes - used for toggle mode edge detection.
-     * Only flips on the false -> true transition, so this is safe to call
-     * on every button event (including repeats) without spamming the toggle.
-     */
     fun onButtonStateChanged(keyCode: Int, pressed: Boolean) {
         if (keyCode != activationKeyCode) return
 
@@ -45,13 +40,5 @@ class MappingEngine {
             toggledOn = !toggledOn
         }
         lastPressed = pressed
-    }
-
-    fun setActivationMode(mode: ActivationMode) {
-        this.activationMode = mode
-        if (mode != ActivationMode.TOGGLE_BUTTON) {
-            toggledOn = false
-        }
-        lastPressed = false
     }
 }
