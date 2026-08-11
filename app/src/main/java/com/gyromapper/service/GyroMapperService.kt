@@ -20,8 +20,10 @@ import com.gyromapper.core.backends.LogBackend
 import com.gyromapper.core.backends.OutputBackend
 import com.gyromapper.core.backends.TouchInjectionBackend
 import com.gyromapper.core.camera.CameraAction
+import com.gyromapper.core.controller.EightBitDoHidReader
 import com.gyromapper.core.controller.OdinIMUReader
 import com.gyromapper.core.data.CameraDelta
+import com.gyromapper.core.data.GyroSource
 import com.gyromapper.core.data.MotionDelta
 import com.gyromapper.core.mapping.MappingEngine
 import com.gyromapper.core.motion.MotionEngine
@@ -48,6 +50,7 @@ class GyroMapperService : Service() {
     private lateinit var cameraAction: CameraAction
     private lateinit var outputBackend: OutputBackend
     lateinit var imuReader: OdinIMUReader
+    private lateinit var eightBitDoReader: EightBitDoHidReader
 
     private val handler = Handler(Looper.getMainLooper())
     private var isProcessing = false
@@ -81,8 +84,10 @@ class GyroMapperService : Service() {
             LogBackend()
         }
         imuReader = OdinIMUReader(this, aggregator)
+        eightBitDoReader = EightBitDoHidReader(this, aggregator)
 
         aggregator.onGyroUpdate = { triggerProcess() }
+        aggregator.setActiveGyroSource(GyroSource.ODIN_IMU)
         outputBackend.onStart()
         imuReader.start()
 
@@ -101,6 +106,7 @@ class GyroMapperService : Service() {
     override fun onDestroy() {
         Log.d(TAG, "Service destroying")
         imuReader.stop()
+        eightBitDoReader.stop()
         outputBackend.onStop()
         instance = null
         super.onDestroy()
@@ -122,6 +128,43 @@ class GyroMapperService : Service() {
         aggregator.updateLeftStick(leftX, leftY)
         aggregator.updateRightStick(rightX, rightY)
     }
+
+    /**
+     * Switches which physical device supplies gyro data. Independent of
+     * the gyro->touch on/off toggle in MappingEngine - this only changes
+     * where gyroDelta comes from, not whether it reaches the touch
+     * backend.
+     *
+     * Stops whichever reader is currently active, releases any in-flight
+     * synthetic touch, and resets MotionEngine's calibration/timing (Odin
+     * and the 8BitDo don't share a rest bias or a timestamp clock domain,
+     * so carrying either over into the new source would read as one
+     * spurious jump), then starts the newly selected reader.
+     */
+    fun selectGyroSource(source: GyroSource) {
+        val current = aggregator.getActiveGyroSource()
+        if (source == current) return
+
+        Log.d(TAG, "Switching gyro source: $current -> $source")
+
+        when (current) {
+            GyroSource.ODIN_IMU -> imuReader.stop()
+            GyroSource.EIGHTBITDO -> eightBitDoReader.stop()
+            GyroSource.NONE -> {}
+        }
+
+        outputBackend.release()
+        motionEngine.resetCalibration()
+        aggregator.setActiveGyroSource(source)
+
+        when (source) {
+            GyroSource.ODIN_IMU -> imuReader.start()
+            GyroSource.EIGHTBITDO -> eightBitDoReader.start()
+            GyroSource.NONE -> {}
+        }
+    }
+
+    fun getActiveGyroSource(): GyroSource = aggregator.getActiveGyroSource()
 
     private fun onForegroundAppChanged(packageName: String?) {
         Log.d(TAG, "Foreground app: $packageName")

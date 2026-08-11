@@ -28,6 +28,18 @@ class UsbHidProbe(private val context: Context) {
     private var outEndpoint: UsbEndpoint? = null
     @Volatile private var reading = false
 
+    /**
+     * Invoked on the background read thread for every raw report read off
+     * the interrupt IN endpoint (not just the throttled ones this class
+     * logs itself). [EightBitDoHidReader] hangs its report parsing off
+     * this instead of duplicating the device-find/permission/claim/read
+     * logic below - see the doc comment on that class for why.
+     *
+     * Each call gets a fresh copy of the report bytes, safe to hold onto
+     * past the callback.
+     */
+    var onReport: ((bytes: ByteArray, length: Int) -> Unit)? = null
+
     fun listDevices(): List<UsbDevice> {
         val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
         val devices = manager.deviceList.values.toList()
@@ -121,7 +133,7 @@ class UsbHidProbe(private val context: Context) {
         }
 
         iface?.let { dumpReportDescriptor(conn, it.id) }
-        tryEnableFullReportAndImu(conn)
+        tryEnableFullReportAndImu(conn, device)
         startReadLoop(conn)
     }
 
@@ -136,7 +148,26 @@ class UsbHidProbe(private val context: Context) {
         }
     }
 
-    private fun tryEnableFullReportAndImu(conn: UsbDeviceConnection) {
+    private fun tryEnableFullReportAndImu(conn: UsbDeviceConnection, device: UsbDevice) {
+        // Report ID 0x01 + subcommands 0x03/0x30 (set full input report mode)
+        // and 0x40/0x01 (enable the 6-axis IMU) are Nintendo's Joy-Con/Switch
+        // Pro Controller protocol, not a generic HID gyro-enable sequence.
+        // They only mean anything to a device that is actually speaking that
+        // protocol - i.e. the 8BitDo while it's emulating a Switch Pro
+        // Controller (vendorId == NINTENDO_VENDOR_ID). Sending them to the
+        // 8BitDo's own D-Input/X-Input HID mode (vendorId ==
+        // EIGHTBITDO_VENDOR_ID) has no reason to do anything useful - that
+        // mode has no reason to interpret output report 0x01 as a Switch
+        // subcommand frame. This was previously sent unconditionally to
+        // whichever vendor matched, which is a real bug: it means IMU-enable
+        // silently did nothing whenever the controller was found via its own
+        // 8BitDo vendor ID rather than in Switch-emulation mode.
+        if (device.vendorId != NINTENDO_VENDOR_ID) {
+            Log.i(TAG, "Vendor 0x${device.vendorId.toString(16)} is not the Switch-protocol " +
+                    "vendor - skipping Switch subcommands, reading reports as-is")
+            return
+        }
+
         val rumbleNeutral = byteArrayOf(0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40)
 
         fun sendSubcommand(subcommand: Int, arg: Int) {
@@ -177,6 +208,7 @@ class UsbHidProbe(private val context: Context) {
                         val hex = buffer.take(read).joinToString(" ") { "%02X".format(it) }
                         Log.i(TAG, "report[$read bytes]: $hex")
                     }
+                    onReport?.invoke(buffer.copyOf(read), read)
                 } else if (read < 0) {
                     Log.w(TAG, "bulkTransfer returned $read")
                 }
@@ -189,4 +221,6 @@ class UsbHidProbe(private val context: Context) {
         iface?.let { connection?.releaseInterface(it) }
         connection?.close()
     }
+
+    fun isReading(): Boolean = reading
 }

@@ -6,14 +6,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import com.gyromapper.R
-import com.gyromapper.core.controller.UsbHidProbe
+import com.gyromapper.core.data.GyroSource
 import com.gyromapper.service.GyroMapperAccessibilityService
 import com.gyromapper.service.GyroMapperService
 
@@ -25,6 +24,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var calibrationText: TextView
     private lateinit var startStopButton: Button
     private lateinit var accessibilityButton: Button
+    private lateinit var gyroSourceText: TextView
+    private lateinit var odinSourceButton: Button
+    private lateinit var eightBitDoSourceButton: Button
 
     private var isServiceRunning = false
 
@@ -38,6 +40,9 @@ class MainActivity : AppCompatActivity() {
         calibrationText = findViewById(R.id.calibrationText)
         startStopButton = findViewById(R.id.startStopButton)
         accessibilityButton = findViewById(R.id.accessibilityButton)
+        gyroSourceText = findViewById(R.id.gyroSourceText)
+        odinSourceButton = findViewById(R.id.odinSourceButton)
+        eightBitDoSourceButton = findViewById(R.id.eightBitDoSourceButton)
 
         updateAccessibilityButton()
 
@@ -53,15 +58,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        odinSourceButton.setOnClickListener {
+            selectGyroSource(GyroSource.ODIN_IMU)
+        }
+
+        eightBitDoSourceButton.setOnClickListener {
+            selectGyroSource(GyroSource.EIGHTBITDO)
+        }
+
         requestPermissions()
         updateUi()
-
-        // Temporary: 8BitDo diagnostic probe
-        UsbHidProbe(this).let { probe ->
-            probe.findEightBitDo()?.let {
-                probe.requestPermissionAndProbe(it)
-            } ?: Log.w("MainActivity", "No 8BitDo device found - check it's connected")
-        }
     }
 
     override fun onResume() {
@@ -152,6 +158,16 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Gyro Mapper stopped", Toast.LENGTH_SHORT).show()
     }
 
+    private fun selectGyroSource(source: GyroSource) {
+        val service = GyroMapperService.instance
+        if (service == null) {
+            Toast.makeText(this, "Start the service first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        service.selectGyroSource(source)
+        updateUi()
+    }
+
     private fun updateUi() {
         val service = GyroMapperService.instance
         val isRunning = service != null
@@ -166,6 +182,12 @@ class MainActivity : AppCompatActivity() {
         // Gyro status: OdinIMUReader doesn't expose isRunning, but the service starts it.
         // We can simply show "Active" when the service is running.
         gyroStatusText.text = if (isRunning) "🟢 Gyro Active" else "⏳ Gyro Inactive"
+
+        gyroSourceText.text = "Gyro source: " + when (service?.getActiveGyroSource()) {
+            GyroSource.ODIN_IMU -> "Odin 3"
+            GyroSource.EIGHTBITDO -> "8BitDo Ultimate 2"
+            else -> "None"
+        }
 
         calibrationText.text = "Calibration: Ready"
         updateAccessibilityButton()

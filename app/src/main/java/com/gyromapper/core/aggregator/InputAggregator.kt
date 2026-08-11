@@ -20,6 +20,23 @@ class InputAggregator {
     var onGyroUpdate: (() -> Unit)? = null
 
     /**
+     * Which source is currently allowed to drive gyroDelta. Only one
+     * gyro source is ever meant to be live at a time - GyroMapperService
+     * enforces that by starting/stopping readers on switch, and this is
+     * the belt-and-suspenders backstop: updateGyro() drops anything that
+     * doesn't match, so a reader that's mid-stop (or that nobody ever
+     * selected) can't clobber the active source's state.
+     */
+    @Volatile
+    private var activeSource: GyroSource = GyroSource.ODIN_IMU
+
+    fun setActiveGyroSource(source: GyroSource) {
+        activeSource = source
+    }
+
+    fun getActiveGyroSource(): GyroSource = activeSource
+
+    /**
      * Get a snapshot of the current state.
      */
     fun getState(): UnifiedInputState = stateRef.get()
@@ -39,6 +56,12 @@ class InputAggregator {
     // Convenience methods
 
     fun updateGyro(dx: Float, dy: Float, timestamp: Long, source: GyroSource) {
+        if (source != activeSource) {
+            // Stale data from a source that isn't the selected one
+            // (e.g. briefly still shutting down after a switch) - drop it
+            // rather than let it clobber the active source's state.
+            return
+        }
         update { state ->
             state.copy(
                 gyroDelta = dx to dy,
